@@ -26,7 +26,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: console/package-lock.json
 
@@ -39,10 +39,19 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Ensure Cloudflare Pages project exists
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if npx wrangler@latest pages project list --json | jq -e '.[] | select(.name == "qike-console")' >/dev/null; then
+            echo "Cloudflare Pages project qike-console already exists."
+          else
+            npx wrangler@latest pages project create qike-console --production-branch=master
+          fi
+
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy console/dist --project-name=qike-console --branch=master
-          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler@latest pages deploy dist --project-name=qike-console --branch=master --commit-dirty=true
