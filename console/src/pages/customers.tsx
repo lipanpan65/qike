@@ -1,7 +1,13 @@
 import {
   CalendarDays,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
   Download,
   FileText,
+  LoaderCircle,
+  Paperclip,
   Plus,
   RefreshCw,
   Search,
@@ -10,7 +16,7 @@ import {
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist"
 import { useCallback, useEffect, useRef, useState } from "react"
 
-import { getCustomers } from "@/api/customers"
+import { getCustomers, type Customer } from "@/api/customers"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import {
@@ -36,6 +42,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { useLayoutStore } from "@/stores/layout-store"
 
 GlobalWorkerOptions.workerSrc = new URL(
@@ -68,6 +88,12 @@ type CustomerForm = {
   notes: string
 }
 
+type CustomerDocumentAsset = {
+  documentName: string
+  pdfUrl: string
+  imageDataUrl: string
+}
+
 const initialCustomerForm: CustomerForm = {
   name: "",
   address: "",
@@ -82,6 +108,20 @@ export function Customers() {
   const [createdDate, setCreatedDate] = useState<Date | undefined>(() => new Date())
   const [isDateFilterOpen, setIsDateFilterOpen] = useState(false)
   const [documentFilter, setDocumentFilter] = useState("all")
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState("10")
+  const [viewingCustomer, setViewingCustomer] = useState<Customer | null>(null)
+  const [customerDocumentAssets, setCustomerDocumentAssets] = useState<
+    CustomerDocumentAsset[]
+  >([])
+  const [isGeneratingCustomerAssets, setIsGeneratingCustomerAssets] =
+    useState(false)
+  const [copiedDocumentName, setCopiedDocumentName] = useState<string | null>(
+    null,
+  )
+  const [copyFailedDocumentName, setCopyFailedDocumentName] = useState<
+    string | null
+  >(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [newCustomer, setNewCustomer] = useState<CustomerForm>(initialCustomerForm)
   const [selectedTemplateId, setSelectedTemplateId] =
@@ -108,11 +148,95 @@ export function Customers() {
     }
   }, [pdfPreviewUrl])
 
+  useEffect(() => {
+    let cancelled = false
+
+    if (!viewingCustomer) {
+      setCustomerDocumentAssets([])
+      setIsGeneratingCustomerAssets(false)
+      return
+    }
+
+    const customerForm: CustomerForm = {
+      name: viewingCustomer.name,
+      address: viewingCustomer.address,
+      incenseBundles: String(viewingCustomer.incenseBundles),
+      notes: viewingCustomer.notes,
+    }
+
+    setIsGeneratingCustomerAssets(true)
+    void Promise.all(
+      viewingCustomer.documents.map(async (documentName) => {
+        const template = documentTemplates.find((item) =>
+          documentName === "香供表文"
+            ? item.kind === "incense-offering"
+            : item.kind === "almsgiving",
+        )
+
+        if (!template) {
+          return null
+        }
+
+        const { pdfBlob, imageDataUrl } = await createDocumentPdfBlob(
+          customerForm,
+          template,
+        )
+
+        return {
+          documentName,
+          pdfUrl: URL.createObjectURL(pdfBlob),
+          imageDataUrl,
+        }
+      }),
+    ).then((assets) => {
+      const generatedAssets = assets.filter(
+        (asset): asset is CustomerDocumentAsset => asset !== null,
+      )
+
+      if (cancelled) {
+        generatedAssets.forEach((asset) => URL.revokeObjectURL(asset.pdfUrl))
+        return
+      }
+
+      setCustomerDocumentAssets(generatedAssets)
+      setIsGeneratingCustomerAssets(false)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [viewingCustomer])
+
+  useEffect(() => {
+    return () => {
+      customerDocumentAssets.forEach((asset) => {
+        URL.revokeObjectURL(asset.pdfUrl)
+      })
+    }
+  }, [customerDocumentAssets])
+
   const updateNewCustomer = <Key extends keyof CustomerForm>(
     key: Key,
     value: CustomerForm[Key],
   ) => {
     setNewCustomer((current) => ({ ...current, [key]: value }))
+  }
+
+  const copyDocumentImage = async (asset: CustomerDocumentAsset) => {
+    try {
+      setCopyFailedDocumentName(null)
+      const imageBlob = await convertImageDataUrlToPng(asset.imageDataUrl)
+
+      await navigator.clipboard.write([
+        new ClipboardItem({ "image/png": imageBlob }),
+      ])
+      setCopiedDocumentName(asset.documentName)
+      window.setTimeout(() => setCopiedDocumentName(null), 2000)
+    } catch {
+      setCopiedDocumentName(null)
+      setCopyFailedDocumentName(asset.documentName)
+      window.setTimeout(() => setCopyFailedDocumentName(null), 2500)
+    }
   }
 
   const selectRelativeDate = (dayOffset: number) => {
@@ -203,6 +327,19 @@ export function Customers() {
 
     return matchesKeyword && matchesCreatedDate && matchesDocument
   })
+  const pageSizeNumber = Number(pageSize)
+  const totalPages = Math.max(
+    1,
+    Math.ceil(filteredCustomers.length / pageSizeNumber),
+  )
+  const paginatedCustomers = filteredCustomers.slice(
+    (currentPage - 1) * pageSizeNumber,
+    currentPage * pageSizeNumber,
+  )
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [createdDate, documentFilter, keyword, pageSize])
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-6">
@@ -492,55 +629,275 @@ export function Customers() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[960px] text-sm">
-            <thead className="border-b bg-muted/50 text-left text-muted-foreground">
-              <tr>
-                <th className="px-4 py-3 font-medium">姓名</th>
-                <th className="px-4 py-3 font-medium">详细地址</th>
-                <th className="px-4 py-3 font-medium">表文</th>
-                <th className="px-4 py-3 font-medium">特供草香</th>
-                <th className="px-4 py-3 font-medium">备注</th>
-                <th className="px-4 py-3 font-medium">创建时间</th>
-                <th className="px-4 py-3 text-right font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {filteredCustomers.map((customer) => (
-                <tr key={customer.id} className="hover:bg-muted/40">
-                  <td className="px-4 py-4">
+        <TooltipProvider delayDuration={250}>
+          <Table className="min-w-[880px]">
+            <TableHeader className="bg-muted/50">
+              <TableRow>
+                <TableHead className="px-4">姓名</TableHead>
+                <TableHead className="px-4">详细地址</TableHead>
+                <TableHead className="px-4">表文</TableHead>
+                <TableHead className="px-4">备注</TableHead>
+                <TableHead className="px-4">创建时间</TableHead>
+                <TableHead className="px-4 text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredCustomers.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    className="h-32 text-center text-muted-foreground"
+                  >
+                    没有符合当前筛选条件的客户
+                  </TableCell>
+                </TableRow>
+              ) : null}
+              {paginatedCustomers.map((customer) => (
+                <TableRow key={customer.id}>
+                  <TableCell className="px-4 py-4">
                     <div className="font-medium">{customer.name}</div>
                     <div className="text-muted-foreground">{customer.id}</div>
-                  </td>
-                  <td className="max-w-xs px-4 py-4 text-muted-foreground">
-                    {customer.address}
-                  </td>
-                  <td className="px-4 py-4">
-                    {customer.documents.join("、")}
-                  </td>
-                  <td className="px-4 py-4">
-                    {customer.incenseBundles} 捆
-                  </td>
-                  <td className="max-w-xs px-4 py-4 text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="max-w-xs px-4 py-4 text-muted-foreground">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          tabIndex={0}
+                          className="block max-w-xs cursor-default truncate outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {customer.address}
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="top"
+                        className="max-w-sm whitespace-normal break-words"
+                      >
+                        {customer.address}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TableCell>
+                  <TableCell className="px-4 py-4">
+                    <div className="grid gap-1">
+                      {customer.documents.map((document) => (
+                        <div key={document}>
+                          {document}
+                          {document === "香供表文"
+                            ? ` ｜ ${customer.incenseBundles} 捆`
+                            : null}
+                        </div>
+                      ))}
+                    </div>
+                  </TableCell>
+                  <TableCell className="max-w-xs px-4 py-4 text-muted-foreground">
                     {customer.notes || "-"}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-4 text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap px-4 py-4 text-muted-foreground">
                     {customer.createdAt}
-                  </td>
-                  <td className="px-4 py-4 text-right">
-                    <Button variant="ghost" size="sm">
+                  </TableCell>
+                  <TableCell className="px-4 py-4 text-right">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setViewingCustomer(customer)}
+                    >
                       查看
                     </Button>
                     <Button variant="ghost" size="sm">
                       编辑
                     </Button>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
+        </TooltipProvider>
+        <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm text-muted-foreground">
+            共 {filteredCustomers.length} 条记录
+          </div>
+          <div className="flex items-center gap-2">
+            <Select value={pageSize} onValueChange={setPageSize}>
+              <SelectTrigger className="h-9 w-28" aria-label="每页条数">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="10">10 条/页</SelectItem>
+                <SelectItem value="20">20 条/页</SelectItem>
+                <SelectItem value="50">50 条/页</SelectItem>
+              </SelectContent>
+            </Select>
+            <span className="min-w-16 text-center text-sm text-muted-foreground">
+              {currentPage} / {totalPages}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              title="上一页"
+              disabled={currentPage <= 1}
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+            >
+              <ChevronLeft className="size-4" />
+              <span className="sr-only">上一页</span>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              title="下一页"
+              disabled={currentPage >= totalPages}
+              onClick={() =>
+                setCurrentPage((page) => Math.min(totalPages, page + 1))
+              }
+            >
+              <ChevronRight className="size-4" />
+              <span className="sr-only">下一页</span>
+            </Button>
+          </div>
         </div>
       </div>
+
+      <Dialog
+        open={viewingCustomer !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setViewingCustomer(null)
+          }
+        }}
+      >
+        <DialogContent className="max-h-[calc(100vh-3rem)] max-w-3xl overflow-y-auto p-0">
+          <DialogHeader>
+            <div className="border-b px-6 py-5">
+              <DialogTitle>客户详情</DialogTitle>
+              <DialogDescription className="mt-1">
+                查看客户信息、PDF 附件和表文图片。
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+
+          {viewingCustomer ? (
+            <dl className="mx-6 grid gap-x-8 gap-y-4 rounded-md border bg-muted/20 p-4 text-sm sm:grid-cols-2">
+              <div className="grid gap-1">
+                <dt className="text-muted-foreground">客户编号</dt>
+                <dd className="font-medium">{viewingCustomer.id}</dd>
+              </div>
+              <div className="grid gap-1">
+                <dt className="text-muted-foreground">姓名</dt>
+                <dd className="font-medium">{viewingCustomer.name}</dd>
+              </div>
+              <div className="grid gap-1 sm:col-span-2">
+                <dt className="text-muted-foreground">详细地址</dt>
+                <dd className="break-words">{viewingCustomer.address}</dd>
+              </div>
+              <div className="grid gap-1">
+                <dt className="text-muted-foreground">表文</dt>
+                <dd className="grid gap-1">
+                  {viewingCustomer.documents.map((document) => (
+                    <div key={document}>
+                      {document}
+                      {document === "香供表文"
+                        ? ` ｜ ${viewingCustomer.incenseBundles} 捆`
+                        : null}
+                    </div>
+                  ))}
+                </dd>
+              </div>
+              <div className="grid gap-1">
+                <dt className="text-muted-foreground">创建时间</dt>
+                <dd>{viewingCustomer.createdAt}</dd>
+              </div>
+              <div className="grid gap-1 sm:col-span-2">
+                <dt className="text-muted-foreground">备注</dt>
+                <dd className="break-words">{viewingCustomer.notes || "-"}</dd>
+              </div>
+            </dl>
+          ) : null}
+
+          <div className="px-6 pb-2 pt-1">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <Paperclip className="size-4" />
+                表文文件
+              </h3>
+              <span className="text-xs text-muted-foreground">
+                PDF 附件与图片预览
+              </span>
+            </div>
+            {isGeneratingCustomerAssets ? (
+              <div className="flex h-40 items-center justify-center gap-2 rounded-md border bg-muted/20 text-sm text-muted-foreground">
+                <LoaderCircle className="size-4 animate-spin" />
+                正在生成表文文件
+              </div>
+            ) : null}
+            {!isGeneratingCustomerAssets && customerDocumentAssets.length === 0 ? (
+              <div className="rounded-md border border-dashed py-10 text-center text-sm text-muted-foreground">
+                暂无表文文件
+              </div>
+            ) : null}
+            <div className="grid gap-4 sm:grid-cols-2">
+              {customerDocumentAssets.map((asset) => (
+                <div
+                  key={asset.documentName}
+                  className="overflow-hidden rounded-md border bg-background"
+                >
+                  <a
+                    href={asset.imageDataUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block bg-muted/20 p-2 outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                    title="打开原图"
+                  >
+                    <img
+                      src={asset.imageDataUrl}
+                      alt={`${asset.documentName}预览`}
+                      className="aspect-[1.414/1] w-full object-contain"
+                    />
+                  </a>
+                  <div className="border-t p-3">
+                    <div className="mb-3 text-sm font-medium">
+                      {asset.documentName}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" asChild>
+                        <a
+                          href={asset.pdfUrl}
+                          download={`${viewingCustomer?.name ?? "客户"}-${asset.documentName}.pdf`}
+                        >
+                          <Download className="mr-2 size-4" />
+                          下载 PDF
+                        </a>
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void copyDocumentImage(asset)}
+                      >
+                        {copiedDocumentName === asset.documentName ? (
+                          <Check className="mr-2 size-4" />
+                        ) : (
+                          <Copy className="mr-2 size-4" />
+                        )}
+                        {copiedDocumentName === asset.documentName
+                          ? "已复制"
+                          : copyFailedDocumentName === asset.documentName
+                            ? "复制失败"
+                            : "复制图片"}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <DialogFooter className="border-t px-6 py-4">
+            <DialogClose asChild>
+              <Button type="button">关闭</Button>
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -551,6 +908,33 @@ function formatDateKey(date: Date) {
   const day = String(date.getDate()).padStart(2, "0")
 
   return `${year}-${month}-${day}`
+}
+
+async function convertImageDataUrlToPng(imageDataUrl: string) {
+  const image = new Image()
+  image.src = imageDataUrl
+  await image.decode()
+
+  const canvas = document.createElement("canvas")
+  canvas.width = image.naturalWidth
+  canvas.height = image.naturalHeight
+  const context = canvas.getContext("2d")
+
+  if (!context) {
+    throw new Error("Canvas rendering is not supported.")
+  }
+
+  context.drawImage(image, 0, 0)
+
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) {
+        resolve(blob)
+      } else {
+        reject(new Error("Image conversion failed."))
+      }
+    }, "image/png")
+  })
 }
 
 async function createDocumentPdfBlob(
