@@ -1,9 +1,18 @@
-import { Download, FileText, Plus, Search } from "lucide-react"
+import {
+  CalendarDays,
+  Download,
+  FileText,
+  Plus,
+  RefreshCw,
+  Search,
+  X,
+} from "lucide-react"
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist"
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
-import { getCustomers, type CustomerStatus } from "@/api/customers"
+import { getCustomers } from "@/api/customers"
 import { Button } from "@/components/ui/button"
+import { Calendar } from "@/components/ui/calendar"
 import {
   Dialog,
   DialogClose,
@@ -16,6 +25,11 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -23,7 +37,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useLayoutStore } from "@/stores/layout-store"
-import { cn } from "@/lib/utils"
 
 GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
@@ -35,26 +48,21 @@ const documentTemplates = [
     id: "incense-offering-2026",
     name: "香供表文（2026年新最终版）",
     url: "/templates/incense-offering-form.pdf",
+    kind: "incense-offering",
+  },
+  {
+    id: "almsgiving-2026-a5",
+    name: "布施表文（2026年 · 小字A5纸）",
+    url: "/templates/almsgiving-form-2026-a5.pdf",
+    kind: "almsgiving",
   },
 ] as const
 
 type DocumentTemplateId = (typeof documentTemplates)[number]["id"]
-
-const statusLabels: Record<CustomerStatus, string> = {
-  active: "活跃",
-  pending: "待跟进",
-  inactive: "暂停",
-}
-
-const statusClassNames: Record<CustomerStatus, string> = {
-  active: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
-  pending: "bg-amber-50 text-amber-700 ring-amber-600/20",
-  inactive: "bg-slate-100 text-slate-600 ring-slate-600/20",
-}
+type DocumentTemplate = (typeof documentTemplates)[number]
 
 type CustomerForm = {
   name: string
-  phone: string
   address: string
   incenseBundles: string
   notes: string
@@ -62,7 +70,6 @@ type CustomerForm = {
 
 const initialCustomerForm: CustomerForm = {
   name: "",
-  phone: "",
   address: "",
   incenseBundles: "1",
   notes: "",
@@ -71,18 +78,27 @@ const initialCustomerForm: CustomerForm = {
 export function Customers() {
   const customers = getCustomers()
   const keyword = useLayoutStore((state) => state.customerKeyword)
-  const status = useLayoutStore((state) => state.customerStatus)
   const setKeyword = useLayoutStore((state) => state.setCustomerKeyword)
-  const setStatus = useLayoutStore((state) => state.setCustomerStatus)
+  const [createdDate, setCreatedDate] = useState<Date | undefined>(() => new Date())
+  const [isDateFilterOpen, setIsDateFilterOpen] = useState(false)
+  const [documentFilter, setDocumentFilter] = useState("all")
+  const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [newCustomer, setNewCustomer] = useState<CustomerForm>(initialCustomerForm)
   const [selectedTemplateId, setSelectedTemplateId] =
     useState<DocumentTemplateId>("incense-offering-2026")
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null)
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null)
   const [isRenderingPdf, setIsRenderingPdf] = useState(false)
+  const previewRenderId = useRef(0)
   const selectedTemplate = documentTemplates.find(
     (template) => template.id === selectedTemplateId,
   )
+  const incenseBundleCount = Number(newCustomer.incenseBundles)
+  const isCustomerFormValid =
+    newCustomer.name.trim().length > 0 &&
+    newCustomer.address.trim().length > 0 &&
+    Number.isInteger(incenseBundleCount) &&
+    incenseBundleCount > 0
 
   useEffect(() => {
     return () => {
@@ -99,7 +115,29 @@ export function Customers() {
     setNewCustomer((current) => ({ ...current, [key]: value }))
   }
 
-  const renderPdfPreview = async () => {
+  const selectRelativeDate = (dayOffset: number) => {
+    const date = new Date()
+    date.setDate(date.getDate() + dayOffset)
+    setCreatedDate(date)
+    setIsDateFilterOpen(false)
+  }
+
+  const renderPdfPreview = useCallback(async () => {
+    const renderId = previewRenderId.current + 1
+    previewRenderId.current = renderId
+
+    if (!isCustomerFormValid) {
+      setImagePreviewUrl(null)
+      setPdfPreviewUrl((currentUrl) => {
+        if (currentUrl) {
+          URL.revokeObjectURL(currentUrl)
+        }
+
+        return null
+      })
+      return
+    }
+
     setIsRenderingPdf(true)
 
     try {
@@ -109,8 +147,13 @@ export function Customers() {
 
       const { pdfBlob, imageDataUrl } = await createDocumentPdfBlob(
         newCustomer,
-        selectedTemplate.url,
+        selectedTemplate,
       )
+
+      if (renderId !== previewRenderId.current) {
+        return
+      }
+
       const nextPdfPreviewUrl = URL.createObjectURL(pdfBlob)
 
       setPdfPreviewUrl((currentUrl) => {
@@ -121,19 +164,44 @@ export function Customers() {
         return nextPdfPreviewUrl
       })
       setImagePreviewUrl(imageDataUrl)
+    } catch (error) {
+      if (renderId === previewRenderId.current) {
+        console.error("PDF preview rendering failed", error)
+      }
     } finally {
-      setIsRenderingPdf(false)
+      if (renderId === previewRenderId.current) {
+        setIsRenderingPdf(false)
+      }
     }
-  }
+  }, [isCustomerFormValid, newCustomer, selectedTemplate])
+
+  useEffect(() => {
+    if (!isDialogOpen) {
+      previewRenderId.current += 1
+      setIsRenderingPdf(false)
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void renderPdfPreview()
+    }, 400)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [isDialogOpen, renderPdfPreview])
 
   const filteredCustomers = customers.filter((customer) => {
     const matchesKeyword =
       customer.name.includes(keyword) ||
-      customer.contact.includes(keyword) ||
-      customer.phone.includes(keyword)
-    const matchesStatus = status === "all" || customer.status === status
+      customer.address.includes(keyword) ||
+      customer.documents.some((document) => document.includes(keyword)) ||
+      customer.notes.includes(keyword) ||
+      customer.createdAt.includes(keyword)
+    const matchesCreatedDate =
+      !createdDate || customer.createdAt.startsWith(formatDateKey(createdDate))
+    const matchesDocument =
+      documentFilter === "all" || customer.documents.includes(documentFilter)
 
-    return matchesKeyword && matchesStatus
+    return matchesKeyword && matchesCreatedDate && matchesDocument
   })
 
   return (
@@ -142,10 +210,10 @@ export function Customers() {
         <div>
           <h1 className="text-2xl font-semibold tracking-normal">客户管理</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            管理客户资料、跟进状态和负责人信息。
+            管理客户资料、表文和供奉信息。
           </p>
         </div>
-        <Dialog>
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
             <Button>
               <Plus className="mr-2 size-4" />
@@ -162,7 +230,7 @@ export function Customers() {
 
                 <div className="mt-6 grid gap-4">
                   <label className="grid gap-2 text-sm font-medium">
-                    PDF 模板
+                    表文
                     <Select
                       value={selectedTemplateId}
                       onValueChange={(value) => {
@@ -191,8 +259,11 @@ export function Customers() {
                   </label>
 
               <label className="grid gap-2 text-sm font-medium">
-                姓名
+                <span>
+                  姓名 <span className="text-destructive">*</span>
+                </span>
                 <Input
+                  required
                   value={newCustomer.name}
                   onChange={(event) => updateNewCustomer("name", event.target.value)}
                   placeholder="请输入姓名"
@@ -200,18 +271,11 @@ export function Customers() {
               </label>
 
               <label className="grid gap-2 text-sm font-medium">
-                电话
-                <Input
-                  type="tel"
-                  value={newCustomer.phone}
-                  onChange={(event) => updateNewCustomer("phone", event.target.value)}
-                  placeholder="请输入联系电话"
-                />
-              </label>
-
-              <label className="grid gap-2 text-sm font-medium">
-                详细地址
+                <span>
+                  详细地址 <span className="text-destructive">*</span>
+                </span>
                 <textarea
+                  required
                   value={newCustomer.address}
                   onChange={(event) => updateNewCustomer("address", event.target.value)}
                   placeholder="请输入省、市、区及详细地址"
@@ -220,9 +284,12 @@ export function Customers() {
               </label>
 
               <label className="grid gap-2 text-sm font-medium">
-                特供草香
+                <span>
+                  特供草香 <span className="text-destructive">*</span>
+                </span>
                 <div className="relative">
                   <Input
+                    required
                     type="number"
                     min="1"
                     step="1"
@@ -254,7 +321,9 @@ export function Customers() {
                   <DialogClose asChild>
                     <Button variant="outline">取消</Button>
                   </DialogClose>
-                  <Button type="button">保存客户</Button>
+                  <Button type="button" disabled={!isCustomerFormValid}>
+                    保存客户
+                  </Button>
                 </DialogFooter>
               </div>
 
@@ -266,7 +335,7 @@ export function Customers() {
                       {selectedTemplate?.name ?? "请选择模板"}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 pr-8">
                     {pdfPreviewUrl ? (
                       <Button variant="outline" size="sm" asChild>
                         <a href={pdfPreviewUrl} download={`${newCustomer.name || "客户"}-香供表文.pdf`}>
@@ -275,15 +344,17 @@ export function Customers() {
                         </a>
                       </Button>
                     ) : null}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={renderPdfPreview}
-                      disabled={isRenderingPdf}
-                    >
-                      <FileText className="mr-2 size-4" />
-                      {isRenderingPdf ? "渲染中" : "渲染预览"}
-                    </Button>
+                    {imagePreviewUrl ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={renderPdfPreview}
+                        disabled={isRenderingPdf}
+                      >
+                        <RefreshCw className="mr-2 size-4" />
+                        {isRenderingPdf ? "渲染中" : "重新渲染"}
+                      </Button>
+                    ) : null}
                   </div>
                 </div>
 
@@ -302,9 +373,17 @@ export function Customers() {
                       <div>
                         <div className="text-sm font-medium">尚未生成 PDF 预览</div>
                         <div className="mt-2 text-sm text-muted-foreground">
-                          填写姓名后，点击“渲染预览”查看真实 PDF。
+                          请先填写姓名、详细地址和特供草香数量。
                         </div>
                       </div>
+                      <Button
+                        type="button"
+                        onClick={renderPdfPreview}
+                        disabled={isRenderingPdf || !isCustomerFormValid}
+                      >
+                        <FileText className="mr-2 size-4" />
+                        {isRenderingPdf ? "渲染中" : "渲染预览"}
+                      </Button>
                     </div>
                   )}
                 </div>
@@ -315,45 +394,114 @@ export function Customers() {
       </div>
 
       <div className="rounded-lg border bg-card">
-        <div className="flex flex-col gap-3 border-b p-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="relative w-full lg:max-w-sm">
+        <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center">
+          <div className="relative w-full max-w-md">
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={keyword}
               onChange={(event) => setKeyword(event.target.value)}
-              placeholder="搜索客户名称、联系人或电话"
+              placeholder="搜索姓名、地址、表文、备注或创建时间"
               className="pl-9"
             />
           </div>
-          <div className="flex flex-wrap gap-2">
-            {[
-              { label: "全部", value: "all" as const },
-              { label: "活跃", value: "active" as const },
-              { label: "待跟进", value: "pending" as const },
-              { label: "暂停", value: "inactive" as const },
-            ].map((item) => (
+          <div className="flex items-center gap-2">
+            <Select value={documentFilter} onValueChange={setDocumentFilter}>
+              <SelectTrigger className="h-10 w-40" aria-label="筛选表文">
+                <SelectValue placeholder="选择表文" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部表文</SelectItem>
+                <SelectItem value="香供表文">香供表文</SelectItem>
+                <SelectItem value="布施表文">布施表文</SelectItem>
+              </SelectContent>
+            </Select>
+            <Popover open={isDateFilterOpen} onOpenChange={setIsDateFilterOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="w-44 justify-start font-normal"
+                >
+                  <CalendarDays className="mr-2 size-4" />
+                  {createdDate
+                    ? createdDate.toLocaleDateString("zh-CN")
+                    : "选择创建日期"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-auto p-0">
+                <Calendar
+                  mode="single"
+                  selected={createdDate}
+                  onSelect={(date) => {
+                    setCreatedDate(date)
+                    if (date) {
+                      setIsDateFilterOpen(false)
+                    }
+                  }}
+                />
+                <div className="grid grid-cols-4 gap-1 border-t p-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => selectRelativeDate(0)}
+                  >
+                    今天
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => selectRelativeDate(-1)}
+                  >
+                    昨天
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => selectRelativeDate(-2)}
+                  >
+                    前天
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setCreatedDate(undefined)
+                      setIsDateFilterOpen(false)
+                    }}
+                  >
+                    全部
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
+            {createdDate ? (
               <Button
-                key={item.value}
-                variant={status === item.value ? "default" : "outline"}
-                size="sm"
-                onClick={() => setStatus(item.value)}
+                type="button"
+                variant="ghost"
+                size="icon"
+                title="清除创建日期"
+                onClick={() => setCreatedDate(undefined)}
               >
-                {item.label}
+                <X className="size-4" />
+                <span className="sr-only">清除创建日期</span>
               </Button>
-            ))}
+            ) : null}
           </div>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[920px] text-sm">
+          <table className="w-full min-w-[960px] text-sm">
             <thead className="border-b bg-muted/50 text-left text-muted-foreground">
               <tr>
-                <th className="px-4 py-3 font-medium">客户</th>
-                <th className="px-4 py-3 font-medium">联系人</th>
-                <th className="px-4 py-3 font-medium">状态</th>
-                <th className="px-4 py-3 font-medium">负责人</th>
-                <th className="px-4 py-3 font-medium">最近跟进</th>
-                <th className="px-4 py-3 text-right font-medium">客户价值</th>
+                <th className="px-4 py-3 font-medium">姓名</th>
+                <th className="px-4 py-3 font-medium">详细地址</th>
+                <th className="px-4 py-3 font-medium">表文</th>
+                <th className="px-4 py-3 font-medium">特供草香</th>
+                <th className="px-4 py-3 font-medium">备注</th>
+                <th className="px-4 py-3 font-medium">创建时间</th>
                 <th className="px-4 py-3 text-right font-medium">操作</th>
               </tr>
             </thead>
@@ -362,28 +510,22 @@ export function Customers() {
                 <tr key={customer.id} className="hover:bg-muted/40">
                   <td className="px-4 py-4">
                     <div className="font-medium">{customer.name}</div>
-                    <div className="text-muted-foreground">
-                      {customer.id} · {customer.city}
-                    </div>
+                    <div className="text-muted-foreground">{customer.id}</div>
+                  </td>
+                  <td className="max-w-xs px-4 py-4 text-muted-foreground">
+                    {customer.address}
                   </td>
                   <td className="px-4 py-4">
-                    <div>{customer.contact}</div>
-                    <div className="text-muted-foreground">{customer.phone}</div>
+                    {customer.documents.join("、")}
                   </td>
                   <td className="px-4 py-4">
-                    <span
-                      className={cn(
-                        "inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset",
-                        statusClassNames[customer.status],
-                      )}
-                    >
-                      {statusLabels[customer.status]}
-                    </span>
+                    {customer.incenseBundles} 捆
                   </td>
-                  <td className="px-4 py-4">{customer.owner}</td>
-                  <td className="px-4 py-4">{customer.lastFollowUp}</td>
-                  <td className="px-4 py-4 text-right">
-                    {customer.value.toLocaleString("zh-CN")}
+                  <td className="max-w-xs px-4 py-4 text-muted-foreground">
+                    {customer.notes || "-"}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-4 text-muted-foreground">
+                    {customer.createdAt}
                   </td>
                   <td className="px-4 py-4 text-right">
                     <Button variant="ghost" size="sm">
@@ -403,9 +545,20 @@ export function Customers() {
   )
 }
 
-async function createDocumentPdfBlob(customer: CustomerForm, templateUrl: string) {
+function formatDateKey(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+
+  return `${year}-${month}-${day}`
+}
+
+async function createDocumentPdfBlob(
+  customer: CustomerForm,
+  template: DocumentTemplate,
+) {
   const sourcePdf = await getDocument({
-    url: templateUrl,
+    url: template.url,
     cMapUrl: "/pdfjs/cmaps/",
     cMapPacked: true,
     standardFontDataUrl: "/pdfjs/standard_fonts/",
@@ -424,7 +577,9 @@ async function createDocumentPdfBlob(customer: CustomerForm, templateUrl: string
   }
 
   await sourcePage.render({ canvasContext: context, viewport }).promise
-  drawCustomerInformation(context, canvas.width, canvas.height, customer)
+  if (template.kind === "incense-offering") {
+    drawCustomerInformation(context, canvas.width, canvas.height, customer)
+  }
 
   const imageDataUrl = canvas.toDataURL("image/jpeg", 0.95)
   const jpegBytes = dataUrlToBytes(imageDataUrl)
@@ -451,7 +606,6 @@ function drawCustomerInformation(
   const scaleX = width / 1684
   const scaleY = height / 1191
   const name = customer.name.trim() || "待填写"
-  const phone = customer.phone.trim() || "待填写"
   const address = customer.address.trim() || "待填写"
   const notes = customer.notes.trim()
   const today = new Intl.DateTimeFormat("zh-CN", {
@@ -471,19 +625,18 @@ function drawCustomerInformation(
   context.font = `${Math.round(29 * scaleY)}px "Songti SC", "STSong", serif`
   drawVerticalLine(context, name, 180 * scaleX, 475 * scaleY, 38 * scaleY)
 
-  context.font = `${Math.round(42 * scaleY)}px "Songti SC", "STSong", serif`
+  context.font = `600 ${Math.round(48 * scaleY)}px "Songti SC", "STSong", serif`
   drawVerticalLine(
     context,
     `特供草香${customer.incenseBundles.trim() || "1"}捆`,
-    1185 * scaleX,
-    270 * scaleY,
-    50 * scaleY,
+    1300 * scaleX,
+    410 * scaleY,
+    56 * scaleY,
   )
 
-  context.font = `${Math.round(23 * scaleY)}px "Songti SC", "STSong", serif`
+  context.font = `${Math.round(28 * scaleY)}px "Songti SC", "STSong", serif`
   const customerDetails = [
     `${name} 地址 ${address}`,
-    `联系电话 ${phone}`,
     `${name} 于 ${today} 为供奉`,
     notes ? `备注 ${notes}` : "",
   ]
@@ -496,8 +649,8 @@ function drawCustomerInformation(
     1560 * scaleX,
     78 * scaleY,
     1060 * scaleY,
-    31 * scaleY,
-    38 * scaleX,
+    36 * scaleY,
+    44 * scaleX,
   )
   context.restore()
 }

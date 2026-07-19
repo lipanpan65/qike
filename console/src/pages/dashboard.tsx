@@ -1,20 +1,19 @@
 import { Link } from "react-router-dom"
-import { ArrowRight, CalendarClock, CircleDollarSign, Users } from "lucide-react"
+import { ArrowRight, FileText, PackageOpen, Users } from "lucide-react"
 
 import { getCustomers } from "@/api/customers"
 import { Button } from "@/components/ui/button"
 
-const currencyFormatter = new Intl.NumberFormat("zh-CN", {
-  style: "currency",
-  currency: "CNY",
-  maximumFractionDigits: 0,
-})
-
 export function Dashboard() {
   const customers = getCustomers()
-  const activeCustomers = customers.filter((item) => item.status === "active")
-  const pendingCustomers = customers.filter((item) => item.status === "pending")
-  const totalValue = customers.reduce((sum, item) => sum + item.value, 0)
+  const totalDocuments = customers.reduce(
+    (sum, item) => sum + item.documents.length,
+    0,
+  )
+  const totalIncenseBundles = customers.reduce(
+    (sum, item) => sum + item.incenseBundles,
+    0,
+  )
   const recentCustomers = customers.slice(0, 4)
 
   return (
@@ -31,19 +30,19 @@ export function Dashboard() {
           icon={Users}
           label="客户总数"
           value={`${customers.length}`}
-          detail={`${activeCustomers.length} 个活跃客户`}
+          detail="已录入客户资料"
         />
         <MetricCard
-          icon={CalendarClock}
-          label="待跟进客户"
-          value={`${pendingCustomers.length}`}
-          detail="需要在本周内完成跟进"
+          icon={FileText}
+          label="表文总数"
+          value={`${totalDocuments}`}
+          detail="包含客户选择的全部表文"
         />
         <MetricCard
-          icon={CircleDollarSign}
-          label="客户价值"
-          value={currencyFormatter.format(totalValue)}
-          detail="基于首版 mock 数据统计"
+          icon={PackageOpen}
+          label="特供草香"
+          value={`${totalIncenseBundles} 捆`}
+          detail="按客户登记数量统计"
         />
       </section>
 
@@ -51,9 +50,9 @@ export function Dashboard() {
         <div className="rounded-lg border bg-card">
           <div className="flex items-center justify-between border-b px-5 py-4">
             <div>
-              <h2 className="text-base font-semibold">最近客户动态</h2>
+              <h2 className="text-base font-semibold">最近客户</h2>
               <p className="text-sm text-muted-foreground">
-                最近有跟进记录的客户。
+                最近录入的客户与表文信息。
               </p>
             </div>
             <Button asChild size="sm">
@@ -67,19 +66,19 @@ export function Dashboard() {
             {recentCustomers.map((customer) => (
               <div
                 key={customer.id}
-                className="grid gap-2 px-5 py-4 md:grid-cols-[1fr_160px_120px]"
+                className="grid gap-2 px-5 py-4 md:grid-cols-[1fr_200px_140px]"
               >
                 <div>
                   <div className="font-medium">{customer.name}</div>
                   <div className="text-sm text-muted-foreground">
-                    {customer.contact} · {customer.city}
+                    {customer.address}
                   </div>
                 </div>
                 <div className="text-sm text-muted-foreground">
-                  负责人：{customer.owner}
+                  {customer.documents.join("、")}
                 </div>
                 <div className="text-sm text-muted-foreground">
-                  {customer.lastFollowUp}
+                  {customer.createdAt}
                 </div>
               </div>
             ))}

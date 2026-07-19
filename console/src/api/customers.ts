@@ -1,72 +1,58 @@
-export type CustomerStatus = "active" | "pending" | "inactive"
-
 export type Customer = {
   id: string
   name: string
-  contact: string
-  phone: string
-  city: string
-  status: CustomerStatus
-  owner: string
-  lastFollowUp: string
-  value: number
+  address: string
+  documents: string[]
+  incenseBundles: number
+  notes: string
+  createdAt: string
 }
 
 export const customers: Customer[] = [
   {
     id: "C-1001",
-    name: "上海明启科技有限公司",
-    contact: "陈思远",
-    phone: "138 0000 2711",
-    city: "上海",
-    status: "active",
-    owner: "潘丽",
-    lastFollowUp: "2026-07-04",
-    value: 128000,
+    name: "陈思远",
+    address: "上海市浦东新区世纪大道88号",
+    documents: ["香供表文"],
+    incenseBundles: 1,
+    notes: "每月初一、十五使用",
+    createdAt: "2026-07-19 10:26",
   },
   {
     id: "C-1002",
-    name: "杭州云川贸易有限公司",
-    contact: "周可",
-    phone: "139 2100 6608",
-    city: "杭州",
-    status: "pending",
-    owner: "王磊",
-    lastFollowUp: "2026-07-03",
-    value: 86000,
+    name: "周可",
+    address: "浙江省杭州市西湖区文三路126号",
+    documents: ["香供表文", "布施表文"],
+    incenseBundles: 2,
+    notes: "两种表文一并生成",
+    createdAt: "2026-07-18 16:42",
   },
   {
     id: "C-1003",
-    name: "苏州北辰制造有限公司",
-    contact: "李佳",
-    phone: "137 8821 4590",
-    city: "苏州",
-    status: "active",
-    owner: "潘丽",
-    lastFollowUp: "2026-07-02",
-    value: 214000,
+    name: "李佳",
+    address: "江苏省苏州市姑苏区人民路518号",
+    documents: ["布施表文"],
+    incenseBundles: 1,
+    notes: "",
+    createdAt: "2026-07-18 09:15",
   },
   {
     id: "C-1004",
-    name: "南京新禾服务中心",
-    contact: "顾明",
-    phone: "136 5520 9041",
-    city: "南京",
-    status: "inactive",
-    owner: "赵敏",
-    lastFollowUp: "2026-06-29",
-    value: 42000,
+    name: "顾明",
+    address: "江苏省南京市秦淮区中山南路219号",
+    documents: ["香供表文"],
+    incenseBundles: 3,
+    notes: "地址已核对",
+    createdAt: "2026-07-17 14:08",
   },
   {
     id: "C-1005",
-    name: "宁波远达供应链有限公司",
-    contact: "林雨",
-    phone: "135 9018 7732",
-    city: "宁波",
-    status: "pending",
-    owner: "王磊",
-    lastFollowUp: "2026-07-01",
-    value: 96000,
+    name: "林雨",
+    address: "浙江省宁波市鄞州区四明中路666号",
+    documents: ["香供表文", "布施表文"],
+    incenseBundles: 2,
+    notes: "优先生成香供表文",
+    createdAt: "2026-07-16 11:30",
   },
 ]
 
