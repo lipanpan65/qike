@@ -7,8 +7,10 @@ import {
   Download,
   FileText,
   LoaderCircle,
+  MessageCircle,
   Paperclip,
   Plus,
+  Printer,
   RefreshCw,
   Search,
   X,
@@ -237,6 +239,29 @@ export function Customers() {
       setCopyFailedDocumentName(asset.documentName)
       window.setTimeout(() => setCopyFailedDocumentName(null), 2500)
     }
+  }
+
+  const printPdfPreview = () => {
+    if (!pdfPreviewUrl) {
+      return
+    }
+
+    const printFrame = document.createElement("iframe")
+    printFrame.src = pdfPreviewUrl
+    printFrame.title = "打印 PDF"
+    printFrame.style.position = "fixed"
+    printFrame.style.width = "1px"
+    printFrame.style.height = "1px"
+    printFrame.style.opacity = "0"
+    printFrame.style.pointerEvents = "none"
+
+    printFrame.addEventListener("load", () => {
+      printFrame.contentWindow?.focus()
+      printFrame.contentWindow?.print()
+      window.setTimeout(() => printFrame.remove(), 60_000)
+    })
+
+    document.body.appendChild(printFrame)
   }
 
   const selectRelativeDate = (dayOffset: number) => {
@@ -474,12 +499,23 @@ export function Customers() {
                   </div>
                   <div className="flex items-center gap-2 pr-8">
                     {pdfPreviewUrl ? (
-                      <Button variant="outline" size="sm" asChild>
-                        <a href={pdfPreviewUrl} download={`${newCustomer.name || "客户"}-香供表文.pdf`}>
-                          <Download className="mr-2 size-4" />
-                          下载 PDF
-                        </a>
-                      </Button>
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={printPdfPreview}
+                        >
+                          <Printer className="mr-2 size-4" />
+                          立即打印
+                        </Button>
+                        <Button variant="outline" size="sm" asChild>
+                          <a href={pdfPreviewUrl} download={`${newCustomer.name || "客户"}-香供表文.pdf`}>
+                            <Download className="mr-2 size-4" />
+                            下载 PDF
+                          </a>
+                        </Button>
+                      </>
                     ) : null}
                     {imagePreviewUrl ? (
                       <Button
@@ -883,6 +919,16 @@ export function Customers() {
                           : copyFailedDocumentName === asset.documentName
                             ? "复制失败"
                             : "复制图片"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        title="打开电脑微信"
+                        onClick={() => window.location.assign("wechat://")}
+                      >
+                        <MessageCircle className="mr-2 size-4" />
+                        打开微信
                       </Button>
                     </div>
                   </div>
